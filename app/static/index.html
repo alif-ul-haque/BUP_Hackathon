@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GridWise · Campus Energy Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232a78d6'/><path d='M17 5 9 18h6l-1 9 9-14h-7z' fill='%23fff'/></svg>"
+    />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div>
+            <h1>GridWise</h1>
+            <p>Smart campus energy optimizer · 24-hour horizon</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="pill" id="api-pill" data-state="unknown">
+            <span class="dot" aria-hidden="true"></span>
+            <span id="api-pill-text">Checking API…</span>
+          </span>
+          <button class="btn icon" id="theme-toggle" type="button" aria-label="Switch colour theme" title="Switch colour theme">
+            <span id="theme-icon" aria-hidden="true">◐</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- One filter row above everything it scopes. -->
+      <section class="card controls" aria-label="Scenario controls">
+        <label class="field">
+          Scenario
+          <select id="scenario-select"></select>
+        </label>
+
+        <div class="field">
+          Plan
+          <div class="segmented" id="source-toggle" role="group" aria-label="Which plan to show">
+            <button type="button" data-source="api" aria-pressed="true">Our API</button>
+            <button type="button" data-source="reference" aria-pressed="false" disabled>Reference</button>
+          </div>
+        </div>
+
+        <button class="btn primary" id="run" type="button">Run optimization</button>
+        <p class="run-status" id="run-status" role="status">Ready.</p>
+      </section>
+
+      <section class="kpis" id="kpis" aria-label="Plan summary figures">
+        <div class="card kpi hero">
+          <p class="label">Total grid cost</p>
+          <p class="value" id="kpi-cost">—</p>
+          <p class="note" id="kpi-cost-note">BDT over 24 hours</p>
+        </div>
+        <div class="card kpi">
+          <p class="label">Grid energy</p>
+          <p class="value" id="kpi-grid">—</p>
+          <p class="note">kWh purchased</p>
+        </div>
+        <div class="card kpi">
+          <p class="label">Peak grid draw</p>
+          <p class="value" id="kpi-peak">—</p>
+          <p class="note" id="kpi-peak-note">kWh</p>
+        </div>
+        <div class="card kpi">
+          <p class="label">Solar used</p>
+          <p class="value" id="kpi-solar">—</p>
+          <p class="note" id="kpi-solar-note">kWh</p>
+        </div>
+        <div class="card kpi">
+          <p class="label">Directives applied</p>
+          <p class="value" id="kpi-directives">—</p>
+          <p class="note" id="kpi-directives-note">of 0 notes</p>
+        </div>
+      </section>
+
+      <div class="grid">
+        <aside class="card span-2" aria-labelledby="notes-title">
+          <div class="card-head">
+            <div>
+              <h2 id="notes-title">Operator notes</h2>
+              <p class="sub">What the model read out of each note. Edit a note and re-run to test it.</p>
+            </div>
+          </div>
+          <ul class="notes" id="directives"></ul>
+          <div class="notes-foot">
+            <button class="btn" id="add-note" type="button">Add note</button>
+            <button class="btn" id="reset-notes" type="button">Reset notes</button>
+          </div>
+        </aside>
+
+        <section class="card" aria-labelledby="scene-title">
+          <div class="card-head">
+            <div>
+              <h2 id="scene-title">Hourly energy supply</h2>
+              <p class="sub">
+                Each column is one hour, stacked by where the energy came from. Drag to orbit,
+                scroll to zoom, click an hour for detail.
+              </p>
+            </div>
+            <div class="view-buttons">
+              <button class="btn" type="button" data-view="orbit">Orbit</button>
+              <button class="btn" type="button" data-view="front">Front</button>
+              <button class="btn" type="button" data-view="top">Top</button>
+            </div>
+          </div>
+
+          <div class="canvas-wrap">
+            <canvas
+              id="scene"
+              tabindex="0"
+              role="img"
+              aria-label="Three-dimensional chart of hourly energy supply. Use the left and right arrow keys to step through the hours, or read the table view below."
+            ></canvas>
+            <div class="tooltip" id="tip" hidden></div>
+          </div>
+
+          <div class="legend" id="legend" role="group" aria-label="Series legend — click to emphasise one series">
+            <button type="button" data-series="grid" aria-pressed="false">
+              <span class="swatch grid" aria-hidden="true"></span> Grid import
+            </button>
+            <button type="button" data-series="solar" aria-pressed="false">
+              <span class="swatch solar" aria-hidden="true"></span> Solar used
+            </button>
+            <button type="button" data-series="battery" aria-pressed="false">
+              <span class="swatch battery" aria-hidden="true"></span> Battery discharge
+            </button>
+          </div>
+
+          <div class="scene-foot">
+            <span class="tariff-key">
+              Floor tint = tariff
+              <span class="tariff-ramp" aria-hidden="true"></span>
+              <span id="tariff-range">low → high</span>
+            </span>
+            <span id="directive-hint">Outlined floor tiles are hours a directive touches.</span>
+          </div>
+        </section>
+
+        <aside class="card" aria-labelledby="detail-title">
+          <div class="card-head">
+            <div>
+              <h2 id="detail-title">Hour detail</h2>
+              <p class="sub">Click a column, or use the arrow keys on the chart.</p>
+            </div>
+          </div>
+          <div class="detail" id="hour-detail">
+            <p class="empty">No hour selected.</p>
+          </div>
+        </aside>
+
+        <section class="card span-2" aria-labelledby="soc-title">
+          <div class="card-head">
+            <div>
+              <h2 id="soc-title">Battery state of charge</h2>
+              <p class="sub">
+                Stored energy at the end of each hour, on its own scale — it must return to the
+                starting level by hour 23.
+              </p>
+            </div>
+          </div>
+          <div class="soc-wrap"><div id="soc-chart"></div></div>
+          <div class="soc-legend">
+            <span><span class="key-line" aria-hidden="true"></span> Stored energy</span>
+            <span><span class="key-band" aria-hidden="true"></span> Below the required reserve</span>
+          </div>
+        </section>
+      </div>
+
+      <section class="card table-card" aria-labelledby="table-title">
+        <div class="card-head">
+          <div>
+            <h2 id="table-title">Table view</h2>
+            <p class="sub">Every value in the returned plan, nothing gated behind a tooltip.</p>
+          </div>
+          <button class="btn" id="table-toggle" type="button" aria-expanded="false">Show table</button>
+        </div>
+        <div class="table-wrap" id="table-wrap" hidden></div>
+      </section>
+
+      <details class="card custom">
+        <summary>Custom scenario JSON</summary>
+        <textarea id="custom-json" spellcheck="false" aria-label="Scenario request JSON"></textarea>
+        <div class="custom-foot">
+          <button class="btn" id="apply-json" type="button">Apply and run</button>
+          <button class="btn" id="copy-response" type="button">Copy last response</button>
+          <span class="custom-msg" id="custom-msg"></span>
+        </div>
+      </details>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
