@@ -19,9 +19,7 @@ const state = {
   notes: [],
   input: null,
   response: null,
-  source: 'api',
   selected: null,
-  lastApiResponse: null,
 };
 
 let scene;
@@ -211,7 +209,7 @@ function render() {
     status.textContent = `${problems.length} replay issue(s): ${problems[0]}`;
   } else {
     delete status.dataset.state;
-    status.textContent = `${state.source === 'api' ? 'Plan from the API' : 'Reference plan'} · replays clean locally.`;
+    status.textContent = 'Plan from the API · replays clean locally.';
   }
 }
 
@@ -721,10 +719,6 @@ function loadCase(index) {
   state.notes = [...item.input.operator_notes];
   state.selected = null;
   el('custom-json').value = JSON.stringify(item.input, null, 2);
-
-  const referenceButton = el('source-toggle').querySelector('[data-source="reference"]');
-  referenceButton.disabled = !item.expected_output;
-  if (!item.expected_output && state.source === 'reference') setSource('api');
 }
 
 function requestBody() {
@@ -755,41 +749,18 @@ async function runOptimization() {
       status.textContent = `HTTP ${response.status} — ${body.detail ?? 'request rejected'}`;
       return;
     }
-    state.lastApiResponse = body;
     state.input = { ...state.input, operator_notes: requestBody().operator_notes };
     state.notes = [...state.input.operator_notes];
     const elapsed = Math.round(performance.now() - started);
-    if (state.source === 'api') {
-      state.response = body;
-      render(); // rewrites the status line with the replay result
-      if (!status.dataset.state) status.textContent = `${status.textContent} (${elapsed} ms)`;
-    } else {
-      status.textContent = `API responded in ${elapsed} ms — showing the reference plan.`;
-    }
+    state.response = body;
+    render(); // rewrites the status line with the replay result
+    if (!status.dataset.state) status.textContent = `${status.textContent} (${elapsed} ms)`;
   } catch (error) {
     status.dataset.state = 'error';
     status.textContent = `Request failed — ${error.message}`;
   } finally {
     button.disabled = false;
     document.querySelector('.grid').classList.remove('is-loading');
-  }
-}
-
-function setSource(source) {
-  state.source = source;
-  for (const button of el('source-toggle').querySelectorAll('button')) {
-    button.setAttribute('aria-pressed', String(button.dataset.source === source));
-  }
-  if (source === 'reference') {
-    const expected = state.cases[state.caseIndex]?.expected_output;
-    if (expected) {
-      state.response = expected;
-      state.notes = [...state.input.operator_notes];
-      render();
-    }
-  } else if (state.lastApiResponse) {
-    state.response = state.lastApiResponse;
-    render();
   }
 }
 
@@ -813,18 +784,10 @@ function wire() {
 
   el('scenario-select').addEventListener('change', (event) => {
     loadCase(Number(event.target.value));
-    if (state.source === 'reference') setSource('reference');
-    else runOptimization();
-  });
-
-  el('run').addEventListener('click', () => {
-    setSource('api');
     runOptimization();
   });
 
-  for (const button of el('source-toggle').querySelectorAll('button')) {
-    button.addEventListener('click', () => setSource(button.dataset.source));
-  }
+  el('run').addEventListener('click', () => runOptimization());
 
   for (const button of document.querySelectorAll('[data-view]')) {
     button.addEventListener('click', () => scene.setView(button.dataset.view));
@@ -868,7 +831,6 @@ function wire() {
       state.notes = [...(parsed.operator_notes ?? [])];
       delete message.dataset.state;
       message.textContent = 'Applied.';
-      setSource('api');
       await runOptimization();
     } catch (error) {
       message.dataset.state = 'error';
