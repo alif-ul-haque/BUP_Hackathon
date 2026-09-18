@@ -31,23 +31,11 @@
         </div>
       </header>
 
-      <!-- One filter row above everything it scopes. -->
       <section class="card controls" aria-label="Scenario controls">
-        <label class="field">
-          Scenario
-          <select id="scenario-select"></select>
-        </label>
-
-        <div class="field">
-          Plan
-          <div class="segmented" id="source-toggle" role="group" aria-label="Which plan to show">
-            <button type="button" data-source="api" aria-pressed="true">Our API</button>
-            <button type="button" data-source="reference" aria-pressed="false" disabled>Reference</button>
-          </div>
-        </div>
-
         <button class="btn primary" id="run" type="button">Run optimization</button>
-        <p class="run-status" id="run-status" role="status">Ready.</p>
+        <p class="run-status" id="run-status" role="status">
+          Paste a scenario into “Custom scenario JSON” below, then Apply and run.
+        </p>
       </section>
 
       <section class="kpis" id="kpis" aria-label="Plan summary figures">
