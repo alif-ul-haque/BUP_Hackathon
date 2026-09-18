@@ -14,11 +14,14 @@ const TOLERANCE = 0.01; // Section 11.5
 const el = (id) => document.getElementById(id);
 
 const state = {
+  cases: [],
+  caseIndex: 0,
   notes: [],
-  baseNotes: [],
   input: null,
   response: null,
+  source: 'api',
   selected: null,
+  lastApiResponse: null,
 };
 
 let scene;
@@ -208,7 +211,7 @@ function render() {
     status.textContent = `${problems.length} replay issue(s): ${problems[0]}`;
   } else {
     delete status.dataset.state;
-    status.textContent = 'Plan from the API · replays clean locally.';
+    status.textContent = `${state.source === 'api' ? 'Plan from the API' : 'Reference plan'} · replays clean locally.`;
   }
 }
 
@@ -695,6 +698,35 @@ async function checkHealth() {
   }
 }
 
+async function loadCases() {
+  const response = await fetch('/api/sample-scenarios', { cache: 'no-store' });
+  const body = await response.json();
+  state.cases = body.cases ?? [];
+
+  const select = el('scenario-select');
+  select.textContent = '';
+  state.cases.forEach((item, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = `${item.id} · ${item.label}`;
+    select.append(option);
+  });
+}
+
+function loadCase(index) {
+  const item = state.cases[index];
+  if (!item) return;
+  state.caseIndex = index;
+  state.input = structuredClone(item.input);
+  state.notes = [...item.input.operator_notes];
+  state.selected = null;
+  el('custom-json').value = JSON.stringify(item.input, null, 2);
+
+  const referenceButton = el('source-toggle').querySelector('[data-source="reference"]');
+  referenceButton.disabled = !item.expected_output;
+  if (!item.expected_output && state.source === 'reference') setSource('api');
+}
+
 function requestBody() {
   return {
     ...state.input,
@@ -705,11 +737,6 @@ function requestBody() {
 async function runOptimization() {
   const button = el('run');
   const status = el('run-status');
-  if (!state.input) {
-    status.dataset.state = 'error';
-    status.textContent = 'No scenario loaded — paste one into “Custom scenario JSON” first.';
-    return;
-  }
   button.disabled = true;
   document.querySelector('.grid').classList.add('is-loading');
   status.textContent = 'Optimizing…';
@@ -728,18 +755,41 @@ async function runOptimization() {
       status.textContent = `HTTP ${response.status} — ${body.detail ?? 'request rejected'}`;
       return;
     }
+    state.lastApiResponse = body;
     state.input = { ...state.input, operator_notes: requestBody().operator_notes };
     state.notes = [...state.input.operator_notes];
     const elapsed = Math.round(performance.now() - started);
-    state.response = body;
-    render(); // rewrites the status line with the replay result
-    if (!status.dataset.state) status.textContent = `${status.textContent} (${elapsed} ms)`;
+    if (state.source === 'api') {
+      state.response = body;
+      render(); // rewrites the status line with the replay result
+      if (!status.dataset.state) status.textContent = `${status.textContent} (${elapsed} ms)`;
+    } else {
+      status.textContent = `API responded in ${elapsed} ms — showing the reference plan.`;
+    }
   } catch (error) {
     status.dataset.state = 'error';
     status.textContent = `Request failed — ${error.message}`;
   } finally {
     button.disabled = false;
     document.querySelector('.grid').classList.remove('is-loading');
+  }
+}
+
+function setSource(source) {
+  state.source = source;
+  for (const button of el('source-toggle').querySelectorAll('button')) {
+    button.setAttribute('aria-pressed', String(button.dataset.source === source));
+  }
+  if (source === 'reference') {
+    const expected = state.cases[state.caseIndex]?.expected_output;
+    if (expected) {
+      state.response = expected;
+      state.notes = [...state.input.operator_notes];
+      render();
+    }
+  } else if (state.lastApiResponse) {
+    state.response = state.lastApiResponse;
+    render();
   }
 }
 
@@ -761,7 +811,20 @@ function wire() {
     },
   });
 
-  el('run').addEventListener('click', () => runOptimization());
+  el('scenario-select').addEventListener('change', (event) => {
+    loadCase(Number(event.target.value));
+    if (state.source === 'reference') setSource('reference');
+    else runOptimization();
+  });
+
+  el('run').addEventListener('click', () => {
+    setSource('api');
+    runOptimization();
+  });
+
+  for (const button of el('source-toggle').querySelectorAll('button')) {
+    button.addEventListener('click', () => setSource(button.dataset.source));
+  }
 
   for (const button of document.querySelectorAll('[data-view]')) {
     button.addEventListener('click', () => scene.setView(button.dataset.view));
@@ -785,7 +848,7 @@ function wire() {
   });
 
   el('reset-notes').addEventListener('click', () => {
-    state.notes = [...state.baseNotes];
+    state.notes = [...(state.cases[state.caseIndex]?.input.operator_notes ?? [])];
     renderDirectives(state.response?.directive_interpretation);
   });
 
@@ -803,10 +866,9 @@ function wire() {
       const parsed = JSON.parse(el('custom-json').value);
       state.input = parsed;
       state.notes = [...(parsed.operator_notes ?? [])];
-      state.baseNotes = [...state.notes];
-      state.selected = null;
       delete message.dataset.state;
       message.textContent = 'Applied.';
+      setSource('api');
       await runOptimization();
     } catch (error) {
       message.dataset.state = 'error';
@@ -849,6 +911,9 @@ async function boot() {
   applyStoredTheme();
   wire();
   await checkHealth();
+  await loadCases();
+  loadCase(0);
+  await runOptimization();
 }
 
 boot();
