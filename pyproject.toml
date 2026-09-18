@@ -1,0 +1,14 @@
+[project]
+name = "gridwise-energy-optimizer"
+version = "0.1.0"
+description = "BUP CSE Fest 2026 — LLM-assisted campus energy optimization service"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+# Lets `pytest` find the `app` package no matter which directory it runs from.
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 90
