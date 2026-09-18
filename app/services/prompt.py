@@ -70,7 +70,10 @@ administrative notices).
 4. Time windows are start-inclusive, end-exclusive, using whole hours. "1 PM to
    3 PM" means hours [13, 14] — 15 is NOT included. "6 PM until 9 PM" means
    hours [18, 19, 20]. "from 2 AM until 5 AM" means hours [2, 3, 4].
-5. hours must be a list of unique integers from 0 to 23, in ascending order.
+5. hours must be a list of unique integers from 0 to 23, in ascending order. It
+   may never be empty. If a note states no time window and the rule applies for
+   the whole day (e.g. "keep at least 50% of the battery in reserve"), enumerate
+   all 24 hours: [0, 1, 2, ..., 23].
 6. For every directive that is not no_op: applies must be true and
    structured_adjustment must be the exact object shape required for that type
    (never null, never missing a required key).
