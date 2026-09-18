@@ -8,8 +8,9 @@ import json
 from dataclasses import replace
 from typing import Any
 
+import httpx
 import pytest
-from openai import OpenAIError
+from openai import AuthenticationError, OpenAIError
 
 from app.core.config import get_settings
 from app.services import interpreter
@@ -69,7 +70,13 @@ def _no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _configured_settings(**overrides: Any):
     base = get_settings()
-    merged = {"llm_api_key": "test-key", "llm_max_retries": 1, **overrides}
+    # Fallbacks default to empty so a real .env cannot change the call count.
+    merged = {
+        "llm_api_key": "test-key",
+        "llm_max_retries": 1,
+        "llm_fallback_models": (),
+        **overrides,
+    }
     return replace(base, **merged)
 
 
@@ -268,3 +275,57 @@ def test_unexpected_bug_in_this_module_still_falls_back(
     entries = interpreter.interpret_notes(NOTES, battery_capacity_kwh=500)
 
     assert all(entry["directive_type"] == "no_op" for entry in entries)
+
+
+def _record_models(fake_client: _FakeClient) -> list[str]:
+    """Capture the model each `.create` call was made against."""
+    seen: list[str] = []
+    original = fake_client.completions.create
+
+    def _spy(**kwargs: Any) -> Any:
+        seen.append(kwargs["model"])
+        return original(**kwargs)
+
+    fake_client.completions.create = _spy  # type: ignore[method-assign]
+    return seen
+
+
+def test_overloaded_primary_model_switches_to_a_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _configured_settings(
+        llm_model="primary", llm_fallback_models=("backup", "last-resort")
+    )
+    monkeypatch.setattr(interpreter, "get_settings", lambda: settings)
+
+    payload = json.dumps({"directive_interpretation": [{"note_index": 0}]})
+    fake_client = _FakeClient([OpenAIError("overloaded"), payload])
+    seen = _record_models(fake_client)
+    monkeypatch.setattr(interpreter, "_get_client", lambda _settings: fake_client)
+
+    entries = interpreter.interpret_notes([NOTES[0]], battery_capacity_kwh=500)
+
+    assert entries == [{"note_index": 0}]
+    # Switched on the first failure instead of retrying the dead model.
+    assert seen == ["primary", "backup"]
+
+
+def test_bad_credentials_give_up_without_trying_other_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _configured_settings(
+        llm_model="primary", llm_fallback_models=("backup", "last-resort")
+    )
+    monkeypatch.setattr(interpreter, "get_settings", lambda: settings)
+
+    auth_error = AuthenticationError(
+        "bad key", response=httpx.Response(401, request=httpx.Request("POST", "/")), body=None
+    )
+    fake_client = _FakeClient([auth_error])
+    seen = _record_models(fake_client)
+    monkeypatch.setattr(interpreter, "_get_client", lambda _settings: fake_client)
+
+    entries = interpreter.interpret_notes([NOTES[0]], battery_capacity_kwh=500)
+
+    assert entries[0]["directive_type"] == "no_op"
+    assert seen == ["primary"]

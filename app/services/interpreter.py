@@ -32,7 +32,7 @@ import time
 from functools import lru_cache
 from typing import Any
 
-from openai import OpenAI, OpenAIError
+from openai import AuthenticationError, OpenAI, OpenAIError, PermissionDeniedError
 
 from app.core.config import Settings, get_settings
 from app.schemas.directive import DirectiveType
@@ -44,6 +44,13 @@ logger = logging.getLogger(__name__)
 RawInterpretation = dict[str, Any]
 
 _FALLBACK_EXPLANATION = "Note interpretation is not available; treated as no_op."
+
+#: A bad or unauthorised key fails identically on every model, so switching is
+#: pointless — give up rather than burn the whole candidate list on it. Every
+#: other failure (overload, rate limit, timeout, a retired model, a model that
+#: rejects JSON mode, an unparsable reply) is model-specific enough to be worth
+#: retrying elsewhere.
+_FATAL_ERRORS = (AuthenticationError, PermissionDeniedError)
 
 
 def interpret_notes(
@@ -89,46 +96,69 @@ def _interpret_with_retries(
     client = _get_client(settings)
     messages = _build_messages(notes, battery_capacity_kwh)
 
-    attempts = max(1, settings.llm_max_retries + 1)
+    candidates = _model_candidates(settings)
+    rounds = max(1, settings.llm_max_retries + 1)
     last_error: Exception | None = None
 
-    for attempt in range(1, attempts + 1):
-        started = time.perf_counter()
-        try:
-            content = _call_model(client, settings, messages)
-            entries = _parse_response(content)
-        except (OpenAIError, ValueError, TypeError, json.JSONDecodeError) as exc:
-            last_error = exc
-            elapsed_ms = (time.perf_counter() - started) * 1000
-            logger.warning(
-                "LLM interpretation attempt %d/%d failed after %.0f ms: %s: %s",
-                attempt,
-                attempts,
-                elapsed_ms,
-                type(exc).__name__,
-                exc,
-            )
-            if attempt < attempts:
-                time.sleep(min(2.0, 0.5 * attempt))
-            continue
+    # Each round tries every candidate once. A model that is overloaded or slow
+    # costs one attempt, not the whole retry budget, so the next model is reached
+    # in seconds rather than after backing off against a queue that is not moving.
+    for round_number in range(1, rounds + 1):
+        for model in candidates:
+            started = time.perf_counter()
+            try:
+                entries = _parse_response(_call_model(client, settings, model, messages))
+            except _FATAL_ERRORS as exc:
+                logger.error(
+                    "LLM rejected the credentials (%s: %s) — no other model will "
+                    "accept them either; falling back to all-no_op.",
+                    type(exc).__name__,
+                    exc,
+                )
+                return _all_no_op(notes)
+            except (OpenAIError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                last_error = exc
+                logger.warning(
+                    "LLM model %s failed after %.0f ms (round %d/%d): %s: %s",
+                    model,
+                    (time.perf_counter() - started) * 1000,
+                    round_number,
+                    rounds,
+                    type(exc).__name__,
+                    exc,
+                )
+                continue
 
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        logger.info(
-            "LLM interpretation ok: model=%s notes=%d attempt=%d/%d elapsed_ms=%.0f",
-            settings.llm_model,
-            len(notes),
-            attempt,
-            attempts,
-            elapsed_ms,
-        )
-        return entries
+            logger.info(
+                "LLM interpretation ok: model=%s notes=%d round=%d/%d elapsed_ms=%.0f",
+                model,
+                len(notes),
+                round_number,
+                rounds,
+                (time.perf_counter() - started) * 1000,
+            )
+            return entries
+
+        if round_number < rounds:
+            time.sleep(min(2.0, 0.5 * round_number))
 
     logger.error(
-        "LLM interpretation failed after %d attempt(s): %s — falling back to all-no_op.",
-        attempts,
+        "LLM interpretation failed on all %d model(s) over %d round(s): %s — "
+        "falling back to all-no_op.",
+        len(candidates),
+        rounds,
         last_error,
     )
     return _all_no_op(notes)
+
+
+def _model_candidates(settings: Settings) -> list[str]:
+    """Primary model first, then each configured fallback, without duplicates."""
+    ordered: list[str] = []
+    for model in (settings.llm_model, *settings.llm_fallback_models):
+        if model and model not in ordered:
+            ordered.append(model)
+    return ordered
 
 
 @lru_cache(maxsize=1)
@@ -137,6 +167,9 @@ def _get_client(settings: Settings) -> OpenAI:
     kwargs: dict[str, Any] = {
         "api_key": settings.llm_api_key,
         "timeout": settings.llm_timeout_seconds,
+        # Retrying is this module's job: the SDK would back off against the same
+        # overloaded model, delaying the switch to a model that is answering.
+        "max_retries": 0,
     }
     if settings.llm_base_url:
         kwargs["base_url"] = settings.llm_base_url
@@ -154,9 +187,11 @@ def _build_messages(notes: list[str], battery_capacity_kwh: float) -> list[dict]
     ]
 
 
-def _call_model(client: OpenAI, settings: Settings, messages: list[dict]) -> str:
+def _call_model(
+    client: OpenAI, settings: Settings, model: str, messages: list[dict]
+) -> str:
     response = client.chat.completions.create(
-        model=settings.llm_model,
+        model=model,
         temperature=settings.llm_temperature,
         response_format={"type": "json_object"},
         messages=messages,
