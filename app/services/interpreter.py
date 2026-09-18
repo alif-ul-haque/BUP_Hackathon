@@ -193,6 +193,7 @@ def _call_model(
     response = client.chat.completions.create(
         model=model,
         temperature=settings.llm_temperature,
+        max_tokens=settings.llm_max_tokens,
         response_format={"type": "json_object"},
         messages=messages,
         timeout=settings.llm_timeout_seconds,
