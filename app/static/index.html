@@ -79,7 +79,7 @@
       </section>
 
       <div class="grid">
-        <aside class="card" aria-labelledby="notes-title">
+        <aside class="card span-2" aria-labelledby="notes-title">
           <div class="card-head">
             <div>
               <h2 id="notes-title">Operator notes</h2>
@@ -141,7 +141,19 @@
           </div>
         </section>
 
-        <section class="card" aria-labelledby="soc-title">
+        <aside class="card" aria-labelledby="detail-title">
+          <div class="card-head">
+            <div>
+              <h2 id="detail-title">Hour detail</h2>
+              <p class="sub">Click a column, or use the arrow keys on the chart.</p>
+            </div>
+          </div>
+          <div class="detail" id="hour-detail">
+            <p class="empty">No hour selected.</p>
+          </div>
+        </aside>
+
+        <section class="card span-2" aria-labelledby="soc-title">
           <div class="card-head">
             <div>
               <h2 id="soc-title">Battery state of charge</h2>
@@ -157,18 +169,6 @@
             <span><span class="key-band" aria-hidden="true"></span> Below the required reserve</span>
           </div>
         </section>
-
-        <aside class="card" aria-labelledby="detail-title">
-          <div class="card-head">
-            <div>
-              <h2 id="detail-title">Hour detail</h2>
-              <p class="sub">Click a column, or use the arrow keys on the chart.</p>
-            </div>
-          </div>
-          <div class="detail" id="hour-detail">
-            <p class="empty">No hour selected.</p>
-          </div>
-        </aside>
       </div>
 
       <section class="card table-card" aria-labelledby="table-title">
