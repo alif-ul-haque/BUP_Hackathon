@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 def run(request: OptimizeEnergyRequest) -> OptimizeEnergyResponse:
     # 1. LLM reads the notes. Output is untrusted.
-    raw_interpretations = interpreter.interpret_notes(request.operator_notes)
+    raw_interpretations = interpreter.interpret_notes(
+        request.operator_notes, request.battery.capacity_kwh
+    )
 
     # 2. Guardrails turn it into exactly one trusted entry per note (Section 08).
     interpretations = validate_interpretations(
