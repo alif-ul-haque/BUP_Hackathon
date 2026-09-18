@@ -39,10 +39,12 @@ something unparsable, the service falls back to treating every note as
    capacity to an LLM in JSON mode, with a system prompt describing the six
    supported directive types, the hour-window convention (`[13, 14]` means
    1 PM–2 PM inclusive), and the solar-factor convention (`factor = 0.2`
-   means usable solar is scaled to 20% of forecast). Calls retry with
-   backoff up to `LLM_MAX_RETRIES` times; any failure (timeout, bad JSON,
-   unreachable provider, missing API key) falls back to a safe `no_op`
-   entry per note instead of raising.
+   means usable solar is scaled to 20% of forecast). An overloaded, slow, or
+   retired model is abandoned after one attempt and the next model in
+   `LLM_FALLBACK_MODELS` is tried immediately; rejected credentials stop the
+   call outright, since no other model would accept them. Any failure that
+   outlives the model list (timeout, bad JSON, unreachable provider, missing
+   API key) falls back to a safe `no_op` entry per note instead of raising.
 2. **Guardrail Validator** (`app/services/directive_validator.py`,
    models in `app/schemas/directive.py`) — the LLM's raw output is treated
    as untrusted input. Each entry is checked against the exact schema for
@@ -173,17 +175,25 @@ Names only; no secret values below.
 | `LOG_LEVEL` | no | `INFO` | Python logging level |
 | `DEBUG` | no | `false` | Adds exception messages to 500 bodies. Keep `false` in deployment (Section 06.1 forbids exposing stack traces) |
 | `LLM_API_KEY` | for LLM interpretation | *(empty)* | API key for the LLM provider. If unset, notes fall back to `no_op` instead of the request failing |
-| `LLM_BASE_URL` | for non-OpenAI providers | *(empty = OpenAI default)* | Base URL of an OpenAI-compatible chat-completions endpoint. This project runs against **Google Gemini** via its OpenAI-compatibility endpoint (`https://generativelanguage.googleapis.com/v1beta/openai/`); leave blank to use OpenAI directly, or point at any other OpenAI-compatible provider (Groq, Together, etc.) |
-| `LLM_MODEL` | no | `gpt-4o-mini` | Model name to request. We run `gemini-2.5-flash` against the Gemini endpoint above |
+| `LLM_BASE_URL` | for non-OpenAI providers | *(empty = OpenAI default)* | Base URL of an OpenAI-compatible chat-completions endpoint. This project runs against **OpenRouter** (`https://openrouter.ai/api/v1`); leave blank to use OpenAI directly, or point at any other OpenAI-compatible provider (Groq, Together, etc.) |
+| `LLM_MODEL` | no | `gpt-4o-mini` | Model name to request. We run `google/gemini-2.5-flash-lite` through OpenRouter |
+| `LLM_FALLBACK_MODELS` | no | *(empty)* | Comma-separated models tried in order when the primary is overloaded, rate-limited, slow, or retired. Each is given one attempt per round before the next round backs off |
 | `LLM_TEMPERATURE` | no | `0.0` | Sampling temperature (kept at 0 for deterministic directive extraction) |
+| `LLM_MAX_TOKENS` | no | `2000` | Caps the reply. Providers that bill against a credit balance (OpenRouter) reserve the model's whole context when this is unset and reject the call with a 402 if the balance cannot cover it |
 | `LLM_TIMEOUT_SECONDS` | no | `20` | Per-attempt request timeout |
-| `LLM_MAX_RETRIES` | no | `2` | Retry attempts on transient LLM failures before falling back to `no_op` |
+| `LLM_MAX_RETRIES` | no | `2` | Extra rounds over the full model list before falling back to `no_op` |
 | `SOLVER_TIME_LIMIT_SECONDS` | no | `10` | Time budget given to the OR-Tools LP solver per request |
 
-Model/provider identifier: **Google Gemini `gemini-2.5-flash`, called through its
-OpenAI-compatible API** (the OpenAI Python SDK is used unmodified, pointed at
-Gemini's compatibility endpoint via `LLM_BASE_URL`). Any OpenAI-compatible
-provider works by changing `LLM_BASE_URL` and `LLM_MODEL`.
+Model/provider identifier: **`google/gemini-2.5-flash-lite`, served through
+OpenRouter** (the OpenAI Python SDK is used unmodified, pointed at OpenRouter via
+`LLM_BASE_URL`). Any OpenAI-compatible provider works by changing `LLM_BASE_URL`
+and `LLM_MODEL`.
+
+The primary model was chosen by scoring candidates against the 18 operator notes
+in the public sample pack, which ship with expected interpretations:
+`gemini-2.5-flash-lite` 18/18 (~14 s), `gpt-4.1-mini` 18/18 (~20 s),
+`gpt-4o-mini` 14/18, `gemini-3.5-flash` 13/18. `LLM_FALLBACK_MODELS` lists the
+rest in that order.
 
 ## Running with Docker
 
@@ -300,8 +310,8 @@ ruff check .
 - [FastAPI](https://fastapi.tiangolo.com/) + [Uvicorn](https://www.uvicorn.org/) — API framework and ASGI server
 - [Pydantic v2](https://docs.pydantic.dev/) — request/response/directive schema validation
 - [python-dotenv](https://github.com/theskumar/python-dotenv) — loads `.env` into the environment
-- [OpenAI Python SDK](https://github.com/openai/openai-python) — used to call the LLM (pointed at Google Gemini's OpenAI-compatible endpoint; works unmodified with OpenAI or any other OpenAI-compatible provider)
-- [Google Gemini](https://ai.google.dev/) (`gemini-2.5-flash`) — the LLM provider used for note interpretation
+- [OpenAI Python SDK](https://github.com/openai/openai-python) — used to call the LLM (pointed at OpenRouter; works unmodified with OpenAI or any other OpenAI-compatible provider)
+- [OpenRouter](https://openrouter.ai/) (`google/gemini-2.5-flash-lite`) — the LLM gateway used for note interpretation
 - [Google OR-Tools](https://developers.google.com/optimization) (GLOP linear solver) — the schedule optimizer
 - [pytest](https://docs.pytest.org/) + [httpx](https://www.python-httpx.org/) — test suite
 - Core architecture (LLM interpreter, guardrail validator, optimizer, schedule validator, API contract) is this team's own implementation, written for BUP CSE Fest 2026.
@@ -313,10 +323,8 @@ ruff check .
   still runs and returns a valid, cost-minimal schedule, just without any
   directive applied. This is a deliberate safety fallback, not a crash.
 - The interpreter targets one LLM call per request covering all notes in
-  that scenario (up to 3, per the request schema); it has been tested
-  against Google Gemini's OpenAI-compatible endpoint and should work with
-  any OpenAI-compatible provider, but only Gemini has been exercised in
-  practice for this submission.
+  that scenario (up to 3, per the request schema); it has been exercised
+  against OpenRouter and should work with any OpenAI-compatible provider.
 - The optimizer is a linear program (OR-Tools GLOP) with a small throughput
   penalty to break simultaneous charge/discharge ties; it assumes the
   battery model and directive constraints given are jointly feasible; a
