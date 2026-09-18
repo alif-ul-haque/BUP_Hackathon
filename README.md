@@ -108,7 +108,7 @@ BUP_Hackathon/
 
 - Python 3.11+
 - pip
-- (Optional) Docker, for the container path below
+- Docker, for the container path below
 
 ## Quickstart (local, clean environment)
 
