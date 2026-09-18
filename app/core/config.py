@@ -51,6 +51,10 @@ class Settings:
     #: Tried in order when the primary model is overloaded, rate-limited, or slow.
     llm_fallback_models: tuple[str, ...] = ()
     llm_temperature: float = 0.0
+    #: Caps the reply. Providers that bill against a credit balance (OpenRouter)
+    #: reserve the model's whole context when this is unset and reject the call
+    #: outright if the balance cannot cover it.
+    llm_max_tokens: int = 2000
     llm_timeout_seconds: float = 20.0
     llm_max_retries: int = 2
 
@@ -72,6 +76,7 @@ def get_settings() -> Settings:
         llm_model=_get_str("LLM_MODEL", "gpt-4o-mini"),
         llm_fallback_models=_get_tuple("LLM_FALLBACK_MODELS", ""),
         llm_temperature=_get_float("LLM_TEMPERATURE", 0.0),
+        llm_max_tokens=_get_int("LLM_MAX_TOKENS", 2000),
         llm_timeout_seconds=_get_float("LLM_TIMEOUT_SECONDS", 20.0),
         llm_max_retries=_get_int("LLM_MAX_RETRIES", 2),
         solver_time_limit_seconds=_get_float("SOLVER_TIME_LIMIT_SECONDS", 10.0),
