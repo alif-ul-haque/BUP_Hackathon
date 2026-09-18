@@ -5,19 +5,24 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, Response, status
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.demo_data import sample_scenarios
 from app.schemas.request import OptimizeEnergyRequest
 from app.schemas.response import HealthResponse, OptimizeEnergyResponse
 from app.services import pipeline
 from app.services.scenario_checks import check_scenario
 
 logger = logging.getLogger(__name__)
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 @asynccontextmanager
@@ -91,3 +96,21 @@ async def optimize_energy(request: OptimizeEnergyRequest) -> OptimizeEnergyRespo
     """
     check_scenario(request)  # raises SemanticValidationError -> 422
     return pipeline.run(request)
+
+
+# --- Dashboard. Not part of the judged contract (Section 06); it only reads the
+# --- same endpoints a judge would, from the same origin.
+
+
+@app.get("/api/sample-scenarios", include_in_schema=False)
+async def list_sample_scenarios() -> dict[str, list[dict]]:
+    """Scenarios for the dashboard picker, with reference plans where available."""
+    return {"cases": sample_scenarios()}
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    return RedirectResponse(url="/dashboard/")
+
+
+app.mount("/dashboard", StaticFiles(directory=STATIC_DIR, html=True), name="dashboard")
